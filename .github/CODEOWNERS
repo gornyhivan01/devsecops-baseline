@@ -1,0 +1,29 @@
+# Владельцы кода (CODEOWNERS).
+#
+# GitHub автоматически запрашивает ревью у указанных пользователей/команд
+# при открытии Pull Request, затрагивающего соответствующие файлы.
+# Работает правило «последний совпавший шаблон побеждает».
+#
+# Синтаксис: <шаблон пути> <@пользователь | @организация/команда>
+# Документация:
+# https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Значение по умолчанию — весь репозиторий.
+*                                @gornyhivan01
+
+# Безопасность: криптография, конфигурация, заголовки, SSRF-защита.
+/app/core/security.py            @gornyhivan01
+/app/core/security_headers.py    @gornyhivan01
+/app/core/config.py              @gornyhivan01
+/app/core/ssrf.py                @gornyhivan01
+/app/services/auth_service.py    @gornyhivan01
+/app/api/                        @gornyhivan01
+
+# Схема БД и миграции — изменения требуют особого внимания.
+/app/db/                         @gornyhivan01
+/app/models/                     @gornyhivan01
+/alembic/                        @gornyhivan01
+
+# Документация и план этапов.
+/docs/                           @gornyhivan01
+/README.md                       @gornyhivan01
