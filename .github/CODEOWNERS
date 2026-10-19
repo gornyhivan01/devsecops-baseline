@@ -9,21 +9,21 @@
 # https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
 # Значение по умолчанию — весь репозиторий.
-*                                @gornyhivan01
+*                                @gornyhivan01 @reSSSno
 
 # Безопасность: криптография, конфигурация, заголовки, SSRF-защита.
-/app/core/security.py            @gornyhivan01
-/app/core/security_headers.py    @gornyhivan01
-/app/core/config.py              @gornyhivan01
-/app/core/ssrf.py                @gornyhivan01
-/app/services/auth_service.py    @gornyhivan01
-/app/api/                        @gornyhivan01
+/app/core/security.py            @gornyhivan01 @reSSSno
+/app/core/security_headers.py    @gornyhivan01 @reSSSno
+/app/core/config.py              @gornyhivan01 @reSSSno
+/app/core/ssrf.py                @gornyhivan01 @reSSSno
+/app/services/auth_service.py    @gornyhivan01 @reSSSno
+/app/api/                        @gornyhivan01 @reSSSno
 
 # Схема БД и миграции — изменения требуют особого внимания.
-/app/db/                         @gornyhivan01
-/app/models/                     @gornyhivan01
-/alembic/                        @gornyhivan01
+/app/db/                         @gornyhivan01 @reSSSno
+/app/models/                     @gornyhivan01 @reSSSno
+/alembic/                        @gornyhivan01 @reSSSno
 
 # Документация и план этапов.
-/docs/                           @gornyhivan01
-/README.md                       @gornyhivan01
+/docs/                           @gornyhivan01 @reSSSno
+/README.md                       @gornyhivan01 @reSSSno
