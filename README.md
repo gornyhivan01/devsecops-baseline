@@ -1,5 +1,7 @@
 # DevSecOps Baseline — эталонный FastAPI-сервис
 
+[![CI](https://github.com/gornyhivan01/devsecops-baseline/actions/workflows/ci.yml/badge.svg)](https://github.com/gornyhivan01/devsecops-baseline/actions/workflows/ci.yml)
+
 Эталонный репозиторий, демонстрирующий полный путь безопасной поставки
 Python-сервиса: от коммита до продакшена. Сейчас выполнен **Этап 1** —
 эталонный FastAPI-сервис с практиками безопасности, привязанными к OWASP Top 10
@@ -18,7 +20,7 @@ Python-сервиса: от коммита до продакшена. Сейча
 |---|---|---|---|
 | **1. Сервис** | FastAPI + async SQLAlchemy 2.0 + PostgreSQL, JWT/refresh, RBAC, rate limiting, security-заголовки, структурированные логи, стандартные HTTP-метрики, OWASP Top 10, unit- и интеграционные тесты | Безопасный фундамент приложения | ✅ выполнен |
 | **2. Контейнеризация** | multi-stage `Dockerfile`, запуск от non-root, `HEALTHCHECK`, `.dockerignore`, compose «app + postgres» | Воспроизводимый образ сервиса | ⬜ не начат |
-| **3. CI** | GitHub Actions: `ruff`, `mypy`, unit-тесты и интеграционные тесты с сервисным PostgreSQL, покрытие, кэш `uv` | Автоматические проверки на каждый PR | ⬜ не начат |
+| **3. CI** | GitHub Actions: `ruff`, `black`, `mypy`, unit-тесты с покрытием и интеграционные тесты с сервисным PostgreSQL, кэш `uv` | Автоматические проверки на каждый PR | ✅ выполнен |
 | **4. SCA/SAST/SBOM** | `pip-audit` / `osv-scanner`, secret scanning, CodeQL, CycloneDX SBOM | Нет известных уязвимостей и утечек секретов | ⬜ не начат |
 | **5. CD** | staging-окружение, `alembic upgrade head` в пайплайне, smoke-тесты, ограничение доступа к `/metrics`, стратегия отката | Воспроизводимый деплой | ⬜ не начат |
 | **6. Supply chain** | Cosign/Sigstore-подпись образов, SLSA provenance, проверка подписи перед деплоем, RS256/keyless JWT | Подписанная и проверяемая поставка | ⬜ не начат |
@@ -31,6 +33,21 @@ Python-сервиса: от коммита до продакшена. Сейча
 (запросы, латентность, in-flight, размер ответа) и не содержит бизнес-метрик.
 Скрейпинг, дашборды и алерты появляются на этапе 7, а ограничение доступа к `/metrics`
 (внутренняя сеть, отдельный порт, auth/mTLS) — на этапе 5.
+
+## CI
+
+Пайплайн (`.github/workflows/ci.yml`) запускается на каждый push в `main` и на
+каждый Pull Request.
+
+| Задача | Что проверяет | Локально |
+|---|---|---|
+| `ruff` | линтер и форматирование | `uv run ruff check . && uv run black --check .` |
+| `mypy` | типы, строгий режим | `uv run mypy app` |
+| `pytest` | юнит-тесты и покрытие (порог 80%) | `uv run pytest -m "not integration" --cov=app` |
+| `integration` | миграции Alembic и диалектные особенности на PostgreSQL 16 | `docker compose up -d postgres`<br>`INTEGRATION_DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/app uv run pytest -m integration` |
+
+Все четыре задачи — обязательные статус-чеки для мержа в `main` (настраиваются в
+ruleset ветки). Покрытие выгружается артефактом `coverage-xml`.
 
 ## Возможности
 
@@ -46,6 +63,8 @@ Python-сервиса: от коммита до продакшена. Сейча
   работает офлайн, не делает запросов к сторонним доменам и содержит примеры
   запросов/ответов и описание кодов ошибок.
 - **Охват OWASP Top 10** тестом или пояснением — см. [`docs/owasp-top10.md`](docs/owasp-top10.md).
+- **CI на GitHub Actions**: `ruff` + `black`, `mypy` (strict), юнит-тесты с покрытием
+  и интеграционные тесты против сервисного PostgreSQL.
 
 ## Требования
 
