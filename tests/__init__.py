@@ -1,0 +1,1 @@
+"""Тесты DevSecOps Baseline Service."""
