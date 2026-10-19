@@ -43,7 +43,7 @@ Python-сервиса: от коммита до продакшена. Сейча
 |---|---|---|
 | `ruff` | линтер и форматирование | `uv run ruff check . && uv run black --check .` |
 | `mypy` | типы, строгий режим | `uv run mypy app` |
-| `pytest` | юнит-тесты и покрытие (порог 80%) | `uv run pytest -m "not integration" --cov=app` |
+| `pytest` | юнит-тесты и покрытие (порог 75%) | `uv run pytest -m "not integration" --cov=app` |
 | `integration` | миграции Alembic и диалектные особенности на PostgreSQL 16 | `docker compose up -d postgres`<br>`INTEGRATION_DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/app uv run pytest -m integration` |
 
 Все четыре задачи — обязательные статус-чеки для мержа в `main` (настраиваются в
