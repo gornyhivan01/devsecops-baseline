@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Минимально необходимые права: только чтение репозитория.
+permissions:
+  contents: read
+
+# Отменяем предыдущий запуск при новом push в ту же ветку.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Линтер и форматирование ────────────────────────────────────────────────
+  ruff:
+    name: ruff
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Получить исходники
+        uses: actions/checkout@v7.0.1
+
+      - name: Установить uv
+        # Плавающих мажорных тегов выше v7 у этого экшена нет, поэтому
+        # используем конкретный тег релиза (v10.3.0), а не @v10.
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          # Кэшируем скачанные пакеты и интерпретаторы Python между запусками.
+          enable-cache: true
+          # Версия Python берётся из .python-version, здесь дублируем явно.
+          python-version: "3.12"
+
+      - name: Установить зависимости
+        # --locked падает, если uv.lock расходится с pyproject.toml:
+        # в CI важно, чтобы зафиксированные версии были актуальны.
+        run: uv sync --locked
+
+      - name: Линтер (ruff)
+        run: uv run ruff check .
+
+      - name: Форматирование (black)
+        run: uv run black --check .
+
+  # ── Проверка типов ─────────────────────────────────────────────────────────
+  mypy:
+    name: mypy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Получить исходники
+        uses: actions/checkout@v7.0.1
+
+      - name: Установить uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Установить зависимости
+        run: uv sync --locked
+
+      - name: Проверка типов (mypy)
+        # Строгий режим включён в pyproject.toml ([tool.mypy], strict = true).
+        run: uv run mypy app
+
+  # ── Юнит-тесты с покрытием (без внешних сервисов) ──────────────────────────
+  pytest:
+    name: pytest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Получить исходники
+        uses: actions/checkout@v7.0.1
+
+      - name: Установить uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Установить зависимости
+        run: uv sync --locked
+
+      - name: Тесты (pytest) с покрытием
+        # Интеграционные тесты вынесены в отдельную задачу (нужен PostgreSQL).
+        run: >-
+          uv run pytest -m "not integration"
+          --cov=app
+          --cov-report=term-missing
+          --cov-report=xml
+          --cov-fail-under=80
+
+      - name: Выгрузить отчёт о покрытии
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn
+
+  # ── Интеграционные тесты против реального PostgreSQL ───────────────────────
+  integration:
+    name: integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        # Готовность контейнера: без health-check шаги начнутся раньше сервера.
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Тесты создают временную БД на этом сервере и накатывают миграции Alembic.
+      INTEGRATION_DATABASE_URL: postgresql+asyncpg://app:app@localhost:5432/app
+
+    steps:
+      - name: Получить исходники
+        uses: actions/checkout@v7.0.1
+
+      - name: Установить uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Установить зависимости
+        run: uv sync --locked
+
+      - name: Интеграционные тесты (PostgreSQL)
+        run: uv run pytest -m integration
