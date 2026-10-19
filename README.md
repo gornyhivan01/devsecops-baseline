@@ -10,6 +10,61 @@ Python-сервиса: от коммита до продакшена. Сейча
 > Полная архитектура (пайплайн, подпись, ворота релиза, runtime-защита) будет
 > достроена на последующих этапах. Сейчас — безопасный фундамент самого сервиса.
 
+## Архитектура
+
+**Стек.** Python 3.12, FastAPI, async SQLAlchemy 2.0 (драйвер `asyncpg`),
+PostgreSQL 16, Alembic, Pydantic v2, PyJWT (HS256), Argon2id, structlog, slowapi,
+prometheus-fastapi-instrumentator, `fastapi-offline` (ассеты Swagger UI локально).
+
+**Слои и путь запроса.** Запрос проходит middleware сверху вниз, затем эндпоинт,
+бизнес-логику и слой доступа к данным:
+
+```
+Клиент
+  │
+  ├─ CORS                     # явный allow-лист origin'ов
+  ├─ SecurityHeaders          # самый внешний слой: заголовки на все ответы
+  ├─ RateLimit (slowapi)
+  │
+  ├─ API v1 (app/api/v1/endpoints)   # валидация Pydantic, коды ответов
+  │    └─ deps.py                    # сессия БД, текущий пользователь, require_roles
+  ├─ Services (app/services)         # бизнес-логика, не знает про HTTP
+  ├─ Models / Schemas                # ORM-модели и Pydantic-контракты
+  └─ DB (app/db)                     # async engine, sessionmaker, Base
+        │
+        └─ PostgreSQL 16
+```
+
+Правило зависимостей одностороннее — `api → services → db/models`: слой `api` не
+работает с ORM напрямую, а `services` не знает про HTTP. Это упрощает
+тестирование и замену хранилища.
+
+**Модели данных.**
+
+| Таблица | Ключевые поля | Назначение |
+|---|---|---|
+| `users` | `id` (UUID), `email` (unique), `full_name`, `hashed_password`, `role`, `is_active`, `created_at`, `updated_at` | пользователи и их роли (`admin` / `user` / `auditor`) |
+| `items` | `id` (UUID), `owner_id` → `users.id` (`ON DELETE CASCADE`), `title`, `description`, `created_at`, `updated_at` | пользовательский ресурс с контролем владения |
+| `refresh_tokens` | `id`, `user_id` → `users.id` (`ON DELETE CASCADE`), `jti`, `token_hash` (SHA-256), `expires_at`, `revoked_at`, `replaced_by_jti` | refresh-сессии с ротацией и отзывом |
+
+**Аутентификация и авторизация.**
+
+- Access-токен — JWT (HS256), TTL 15 минут, содержит `iss`/`aud`.
+- Refresh-токен — TTL 7 дней; в БД хранится только SHA-256 хеш, при обновлении
+  старый отзывается (ротация), при `logout` — явный отзыв.
+- RBAC — зависимость `require_roles(...)` ограничивает эндпоинт по ролям,
+  объектный уровень контролируется владением; чужой объект возвращает **404**
+  (анти-энумерация, OWASP A01).
+
+**Конфигурация и наблюдаемость.**
+
+- Настройки — `pydantic-settings` (`app/core/config.py`), обязательный
+  `SECRET_KEY ≥ 32` символа, кэш через `lru_cache`.
+- Логи — structlog (JSON в проде) с ред-акцией чувствительных полей.
+- Метрики — стандартные HTTP на `/metrics`; health — `/health/live` и
+  `/health/ready`.
+- Документация (`/docs`, `/openapi.json`) включается вне `production`.
+
 ## План этапов
 
 Проект строится поэтапно: от безопасного сервиса до подписанной поставки.
@@ -34,10 +89,24 @@ Python-сервиса: от коммита до продакшена. Сейча
 Скрейпинг, дашборды и алерты появляются на этапе 7, а ограничение доступа к `/metrics`
 (внутренняя сеть, отдельный порт, auth/mTLS) — на этапе 5.
 
-## CI
+## Разработка и CI
 
-Пайплайн (`.github/workflows/ci.yml`) запускается на каждый push в `main` и на
-каждый Pull Request.
+Пайплайн — [`.github/workflows/ci.yml`](.github/workflows/ci.yml). Задачи
+выполняются параллельно и не зависят друг от друга.
+
+### Когда запускается
+
+| Действие | Запуск CI |
+|---|---|
+| push в `main` | ✅ |
+| любой коммит в открытый Pull Request | ✅ |
+| push в ветку **без** открытого PR | ❌ не запускается |
+| вручную: `Actions → CI → Run workflow` | ✅ (`workflow_dispatch`) |
+
+Практическое следствие: **сначала push ветки, сразу за ним — Pull Request**, тогда
+каждый следующий коммит в ветку проверяется автоматически до самого мержа.
+
+### Задачи
 
 | Задача | Что проверяет | Локально |
 |---|---|---|
@@ -46,8 +115,63 @@ Python-сервиса: от коммита до продакшена. Сейча
 | `pytest` | юнит-тесты и покрытие (порог 75%) | `uv run pytest -m "not integration" --cov=app` |
 | `integration` | миграции Alembic и диалектные особенности на PostgreSQL 16 | `docker compose up -d postgres`<br>`INTEGRATION_DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/app uv run pytest -m integration` |
 
-Все четыре задачи — обязательные статус-чеки для мержа в `main` (настраиваются в
-ruleset ветки). Покрытие выгружается артефактом `coverage-xml`.
+Все четыре задачи настраиваются в ruleset ветки как обязательные статус-чеки для
+мержа в `main`. Отчёт о покрытии выгружается артефактом `coverage-xml`.
+
+### Порядок работы
+
+```bash
+git switch -c feature/<краткое-имя>     # или fix/…, docs/…, ci/…
+# … изменения …
+
+uv run ruff check . && uv run black --check . && uv run mypy app && uv run pytest
+
+git push -u origin feature/<краткое-имя>
+# → открыть Pull Request → ревью → Squash and merge
+```
+
+- Ветка `main` защищена: прямые push запрещены, изменения — только через Pull Request.
+- Слияние — **Squash and merge**, история линейная (без merge-коммитов).
+- Ветка после мержа удаляется.
+- Префиксы коммитов: `feat:`, `fix:`, `refactor:`, `docs:`, `ci:`, `test:`, `chore:`.
+- Шаблон Pull Request ([`.github/pull_request_template.md`](.github/pull_request_template.md))
+  подставляется автоматически и содержит чек-лист проверок.
+
+## Совместная работа
+
+Репозиторий публичный: читать и форкать может любой, права на запись выдаются
+приглашением.
+
+**Приглашение:** `Settings → Collaborators and teams → Add people` → GitHub-логин
+или e-mail → роль → приглашённый принимает (приглашение действует 7 дней).
+
+| Роль | Возможности | Кому |
+|---|---|---|
+| Read | чтение, клонирование, PR из форка | наблюдатель, проверяющий |
+| Triage | + управление issues/PR без доступа к коду | ведущий задач |
+| Write | + push веток и merge PR | разработчик |
+| Maintain | + настройки репозитория (без управления участниками) | старший разработчик |
+| Admin | полный доступ: секреты, Actions, правила ветки, удаление репозитория | администратор |
+
+Для разработки достаточно **Write**: `Admin` дополнительно позволяет менять правила
+ветки и содержимое секретов CI.
+
+**Владельцы кода.** [`.github/CODEOWNERS`](.github/CODEOWNERS) назначает ревьюеров
+автоматически: по умолчанию — весь репозиторий, отдельно отмечены критичные модули
+(`core/security.py`, `core/security_headers.py`, `core/config.py`, `core/ssrf.py`,
+`services/auth_service.py`, `api/`, `db/`, `models/`, `alembic/`). Чтобы ревью
+владельца стало обязательным, в ruleset включается **Require review from Code
+Owners** вместе с минимум одним одобрением.
+
+**Защита ветки `main`** (ruleset):
+
+- изменения только через Pull Request;
+- обязательные статус-чеки `ruff`, `mypy`, `pytest`, `integration`;
+- линейная история, запрет force-push и удаления ветки.
+
+Внешним участникам, которым не нужны права на запись, подходит штатный путь
+**fork → Pull Request**: работа идёт в личной копии, а изменения попадают в `main`
+только после ревью.
 
 ## Возможности
 
@@ -166,7 +290,7 @@ uv run alembic revision -m "..."    # новая миграция
 прогона не требуется.
 
 ```bash
-uv run pytest                       # быстрые тесты (54) + интеграционные пропускаются
+uv run pytest                       # быстрые тесты (61) + интеграционные пропускаются
 uv run pytest -q                    # краткий вывод
 uv run pytest --cov=app             # с покрытием (pytest-cov)
 ```
@@ -195,22 +319,47 @@ uv run black --check .     # проверка форматирования
 uv run mypy app            # строгая проверка типов (strict)
 ```
 
-## Структура
+## Структура проекта
 
 ```
-app/
-  core/        # config, security (Argon2id + JWT), logging, rate limit,
-               # security_headers, ssrf
-  db/          # async engine/session (ленивый движок), Base
-  models/      # User, RefreshToken, Item
-  schemas/     # Pydantic v2 (extra="forbid", валидация)
-  services/    # слой бизнес-логики (AuthService, exceptions)
-  api/         # deps (RBAC), v1 endpoints (auth, users, items, health), роутеры
-  main.py      # точка входа, middleware, метрики
-alembic/       # асинхронное окружение и миграции
-tests/         # покрытие OWASP Top 10 и компонентов (SQLite)
-  integration/ # тесты против реального PostgreSQL (маркер `integration`)
-docs/          # расшифровка пунктов OWASP
+.
+├── .github/
+│   ├── workflows/ci.yml          # пайплайн CI (4 задачи)
+│   ├── CODEOWNERS                # владельцы кода для авто-ревью
+│   ├── ISSUE_TEMPLATE/           # шаблоны issue (bug, feature)
+│   └── pull_request_template.md  # чек-лист Pull Request
+├── alembic/
+│   ├── env.py                    # асинхронное окружение миграций
+│   └── versions/                 # миграции (0001_initial)
+├── app/
+│   ├── api/
+│   │   ├── deps.py               # зависимости: сессия БД, текущий пользователь, RBAC
+│   │   ├── responses.py          # типовые ответы об ошибках для OpenAPI
+│   │   └── v1/
+│   │       ├── endpoints/        # auth, users, items, health
+│   │       └── router.py         # сборка префикса /api/v1
+│   ├── core/
+│   │   ├── config.py             # настройки (pydantic-settings)
+│   │   ├── security.py           # Argon2id, JWT
+│   │   ├── logging.py            # structlog + ред-акция секретов
+│   │   ├── rate_limit.py         # slowapi
+│   │   ├── security_headers.py   # заголовки безопасности
+│   │   └── ssrf.py               # guard для исходящих URL
+│   ├── db/
+│   │   ├── base.py               # Declarative Base
+│   │   └── session.py            # async engine и sessionmaker (ленивые)
+│   ├── models/                   # User, RefreshToken, Item
+│   ├── schemas/                  # Pydantic v2 (extra="forbid", валидация)
+│   ├── services/                 # бизнес-логика (AuthService, исключения)
+│   └── main.py                   # сборка приложения, middleware, метрики
+├── docs/owasp-top10.md           # соответствие OWASP Top 10 и допущения
+├── tests/
+│   ├── integration/              # против реального PostgreSQL (маркер `integration`)
+│   └── test_*.py                 # юнит/контракт на SQLite, покрытие OWASP
+├── docker-compose.yml            # PostgreSQL 16 для локальной разработки
+├── pyproject.toml                # зависимости и настройки инструментов
+├── uv.lock                       # зафиксированные версии (воспроизводимость)
+└── .env.example                  # шаблон переменных окружения
 ```
 
 ## Практики безопасности (кратко)
