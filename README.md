@@ -3,9 +3,10 @@
 [![CI](https://github.com/gornyhivan01/devsecops-baseline/actions/workflows/ci.yml/badge.svg)](https://github.com/gornyhivan01/devsecops-baseline/actions/workflows/ci.yml)
 
 Эталонный репозиторий, демонстрирующий полный путь безопасной поставки
-Python-сервиса: от коммита до продакшена. Сейчас выполнен **Этап 1** —
+Python-сервиса: от коммита до продакшена. Сейчас выполнены **Этапы 1 и 2** —
 эталонный FastAPI-сервис с практиками безопасности, привязанными к OWASP Top 10
-(2021); дальнейшие этапы — в разделе [«План этапов»](#план-этапов).
+(2021), и его воспроизводимый Docker-образ; дальнейшие этапы — в разделе
+[«План этапов»](#план-этапов).
 
 > Полная архитектура (пайплайн, подпись, ворота релиза, runtime-защита) будет
 > достроена на последующих этапах. Сейчас — безопасный фундамент самого сервиса.
@@ -74,7 +75,7 @@ prometheus-fastapi-instrumentator, `fastapi-offline` (ассеты Swagger UI л
 | Этап | Содержание | Результат | Статус |
 |---|---|---|---|
 | **1. Сервис** | FastAPI + async SQLAlchemy 2.0 + PostgreSQL, JWT/refresh, RBAC, rate limiting, security-заголовки, структурированные логи, стандартные HTTP-метрики, OWASP Top 10, unit- и интеграционные тесты | Безопасный фундамент приложения | ✅ выполнен |
-| **2. Контейнеризация** | multi-stage `Dockerfile`, запуск от non-root, `HEALTHCHECK`, `.dockerignore`, compose «app + postgres» | Воспроизводимый образ сервиса | ⬜ не начат |
+| **2. Контейнеризация** | multi-stage `Dockerfile`, запуск от non-root, `HEALTHCHECK`, `.dockerignore`, compose «app + postgres» | Воспроизводимый образ сервиса | ✅ выполнен |
 | **3. CI** | GitHub Actions: `ruff`, `black`, `mypy`, unit-тесты с покрытием и интеграционные тесты с сервисным PostgreSQL, кэш `uv` | Автоматические проверки на каждый PR | ✅ выполнен |
 | **4. SCA/SAST/SBOM** | `pip-audit` / `osv-scanner`, secret scanning, CodeQL, CycloneDX SBOM | Нет известных уязвимостей и утечек секретов | ⬜ не начат |
 | **5. CD** | staging-окружение, `alembic upgrade head` в пайплайне, smoke-тесты, ограничение доступа к `/metrics`, стратегия отката | Воспроизводимый деплой | ⬜ не начат |
@@ -226,6 +227,54 @@ uv run uvicorn app.main:app --reload
 > Документация (`/docs`, `/openapi.json`) включается вне `production`. При
 > `ENVIRONMENT=production` она отключается намеренно (OWASP A05).
 
+## Контейнеризация (этап 2)
+
+Воспроизводимый образ сервиса. **Multi-stage `Dockerfile`**: в build-слое
+собирается только venv (`uv sync --frozen --no-dev --no-install-project`), в
+runtime попадает готовый `.venv` и исходники — в образе нет компилятора и
+лишних утилит. Запуск — от непривилегированного пользователя (UID 10001),
+healthcheck — `python3 -c urllib...` по `/health/live` без внешних инструментов.
+
+Сборка образа не входит в CI на этапе 1 (это сфера этапов 4–5), поэтому
+проверяется локально вручную.
+
+### Сборка и запуск (вариант 1: compose)
+
+```bash
+docker compose up -d --build
+```
+
+- `SECRET_KEY` обязателен — compose упадёт со внятной ошибкой, если его нет в
+  `.env` (который compose читает автоматически для интерполяции):
+  ```bash
+  echo "SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(64))')" >> .env
+  docker compose up -d --build
+  ```
+- entrypoint накатывает миграции (`alembic upgrade head`), затем запускает
+  uvicorn; приложение ходит в БД по адресу `app@postgres:5432` (имя сервиса).
+- `ENVIRONMENT=development` в compose — Swagger UI доступен на
+  <http://localhost:8000/docs>.
+
+### Вариант 2: только app-образ
+
+```bash
+docker build -t devsecops-baseline .
+docker run --rm -p 8000:8000 \
+  -e SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(64))')" \
+  -e DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/app \
+  devsecops-baseline
+```
+
+### Что внутри (практики безопасности образа)
+
+| Требование | Реализация |
+| --- | --- |
+| Воспроизводимость | `uv.lock` + `uv sync --frozen` (зафиксированные версии) |
+| Не root | пользователь `app` (UID 10001), `USER app`, без шелла |
+| Healthcheck | `HEALTHCHECK` по `/health/live` (только stdlib, без curl) |
+| Меньше поверхности | `.dockerignore` (кэши, тесты, `.env`), slim-база, без компилятора |
+| Миграции при старте | `docker/entrypoint.sh`: `alembic upgrade head` → uvicorn |
+
 ## Переменные окружения
 
 Полный перечень — в [`.env.example`](.env.example). Ключевые:
@@ -356,7 +405,10 @@ uv run mypy app            # строгая проверка типов (strict)
 ├── tests/
 │   ├── integration/              # против реального PostgreSQL (маркер `integration`)
 │   └── test_*.py                 # юнит/контракт на SQLite, покрытие OWASP
-├── docker-compose.yml            # PostgreSQL 16 для локальной разработки
+├── docker-compose.yml            # app + PostgreSQL 16 для локальной разработки
+├── Dockerfile                    # multi-stage образ (этап 2): non-root, HEALTHCHECK
+├── .dockerignore                 # что не попадает в образ
+├── docker/entrypoint.sh          # миграции Alembic + запуск uvicorn
 ├── pyproject.toml                # зависимости и настройки инструментов
 ├── uv.lock                       # зафиксированные версии (воспроизводимость)
 └── .env.example                  # шаблон переменных окружения

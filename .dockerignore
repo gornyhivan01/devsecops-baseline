@@ -1,0 +1,30 @@
+# Прогон сборки
+.dockerignore
+Dockerfile
+
+# VCS и IDE
+.git
+.idea
+.vscode
+
+# Локальное окружение
+.venv
+.env
+
+# Кэши Python и инструментов
+__pycache__
+*.py[cod]
+.mypy_cache
+.pytest_cache
+.ruff_cache
+
+# Слои, не нужные в образе
+tests
+docs
+
+# Артефакты
+*.log
+coverage.xml
+.coverage
+dist
+build
