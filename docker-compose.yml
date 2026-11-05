@@ -1,5 +1,11 @@
-# Локальный PostgreSQL для эталонного сервиса.
-# Используется только для разработки и прогона интеграционных тестов.
+# Локальная среда эталонного сервиса: приложение + PostgreSQL.
+# - postgres: база для разработки и интеграционных тестов.
+# - app:      контейнеризированный сервис (этап 2), запускается через Dockerfile.
+#
+# Для запуска app нужен SECRET_KEY (>= 32 символа):
+#   echo 'SECRET_KEY=<случайная строка>' >> .env
+name: devsecops-baseline
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -16,6 +22,24 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  app:
+    build:
+      context: .
+    environment:
+      # ENVIRONMENT=development включает Swagger UI на /docs (см. app/core/config.py).
+      ENVIRONMENT: development
+      # SECRET_KEY обязателен; compose упадёт с понятной ошибкой, если не задан.
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required (>= 32 chars). Add it to .env}
+      # app в контейнере ходит в БД по имени сервиса, а не localhost.
+      DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app
+      LOG_JSON: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:
