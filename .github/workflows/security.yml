@@ -49,7 +49,7 @@ jobs:
       - name: Docker build
         run: docker build --pull -t baseline:${{ github.sha }} .
       - name: Container scan Trivy
-        uses: aquasecurity/trivy-action@0.33.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: baseline:${{ github.sha }}
           format: json
