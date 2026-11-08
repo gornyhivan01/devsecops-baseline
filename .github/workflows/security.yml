@@ -30,7 +30,11 @@ jobs:
           uv export --frozen --no-dev --no-emit-project --format requirements-txt -o /tmp/requirements-audit.txt
       - name: Install security tools
         run: |
-          python -m pip install --user pip-audit==2.9.0 bandit==1.8.6 semgrep==1.136.0 checkov==3.2.471
+          uv tool install --python 3.12 pip-audit==2.9.0
+          uv tool install --python 3.12 bandit==1.8.6
+          uv tool install --python 3.12 semgrep==1.136.0
+          uv tool install --python 3.12 checkov==3.2.471
+
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: SAST Bandit
         run: |
